@@ -16,7 +16,7 @@ use strict;
 use Exporter;
 use vars qw(@ISA @EXPORT @EXPORT_OK $VERSION);
 @ISA = qw(Exporter);
-$VERSION = '0.01';
+$VERSION = '0.02';
 @EXPORT = qw( ntlmgen );
 
 # The mdfour function is available for exporting if they really want
@@ -59,15 +59,21 @@ sub lmhash($) {
 sub nthash($) {
 	my ( $pass ) = @_;
 	my ( $hex );
+	my ( $digest );
 	$pass = substr($pass||"",0,128);
 	$pass =~ s/(.)/$1\000/sg;
+	$hex = "";
 	if ( $HaveDigestMD4 ) {
-		$hex = Digest::MD4->new->add($pass)->hexdigest;
-		$hex =~ tr/a-z/A-Z/;
+		eval {
+			$digest = new Digest::MD4;
+			$digest->reset();
+			$digest->add($pass);
+			$hex = $digest->hexdigest();
+			$hex =~ tr/a-z/A-Z/;
+		};
+		$HaveDigestMD4 = 0 unless ( $hex );
 	}
-	else {
-		$hex = sprintf("%02X"x16,mdfour($pass));
-	}
+	$hex = sprintf("%02X"x16,mdfour($pass)) unless ( $hex );
 	return $hex;
 }
 
@@ -475,6 +481,7 @@ sub E_P16 {
 1;
 
 __END__
+
 =head1 NAME
 
 Crypt::SmbHash - Perl-only implementation of lanman and nt md4 hash functions, for use in Samba style smbpasswd entries

@@ -3,4 +3,7 @@ Revision history for Perl extension Crypt::SmbHash.
 0.01  Wed Sep 26 10:58:41 2001
 	- original version; created by h2xs 1.21 with options
 		-X -n Crypt::SmbHash
+0.02  Mon Oct  8 12:07:08 2001
+	- workaround for Digest::MD4, other machines didn't like the
+		way I was calling it
 
