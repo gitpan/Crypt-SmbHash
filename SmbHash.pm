@@ -14,39 +14,52 @@ package Crypt::SmbHash;
 use 5.005;
 use strict;
 use Exporter;
+use Carp;
 use vars qw(@ISA @EXPORT @EXPORT_OK $VERSION);
 @ISA = qw(Exporter);
-$VERSION = '0.02';
+$VERSION = '0.12';
 @EXPORT = qw( ntlmgen );
 
 # The mdfour function is available for exporting if they really want
 # it =)
-@EXPORT_OK = qw( lmhash nthash ntlmgen mdfour );
+@EXPORT_OK = qw( lmhash nthash ntlmgen mdfour smbhash E_P24 E_P21 SMBNTencrypt );
 
-# Works out if local system has the module Digest::MD4, and uses it
-# if it does, otherwise uses ported version of the md4 algorithm
-# Performance is alot better with Digest::MD4, so its recommended to
-# get Digest::MD4 installed if you intend to generate alot of hashes
-# in a small amount of time.
+# Works out if local system has Digest::MD4 and Encode
 my $HaveDigestMD4;
-
+my $HaveUnicode;
 BEGIN {
 	$HaveDigestMD4 = 0;
+	$HaveUnicode = 0;
 	if ( eval "require 'Digest/MD4.pm';" ) {
 		$HaveDigestMD4 = 1;
 	}
+	if (eval "require Encode;") {
+		import Encode;
+		$HaveUnicode = 1;
+	}
 }
+
 
 # lmhash PASSWORD
 # Generates lanman password hash for a given password, returns the hash
 #
 # Extracted and ported from SAMBA/source/libsmb/smbencrypt.c:nt_lm_owf_gen
-sub lmhash($) {
-	my ( $pass ) = @_;
+sub lmhash($;$) {
+	my ( $pass, $pwenc ) = @_;
 	my ( @p16 );
 
-	$pass = substr($pass||"",0,129);
-	$pass =~ tr/a-z/A-Z/;
+	$pass = "" unless defined($pass);
+	$pass = uc($pass);
+	if (!$HaveUnicode) {
+		if (defined($pwenc)) {
+			croak "Encode module not found: no encoding support";
+		}
+	}
+	else {
+		$pwenc = "iso-8859-1" unless defined($pwenc);
+		$pass = encode($pwenc,$pass);
+	}
+
 	$pass = substr($pass,0,14);
 	@p16 = E_P16($pass);
 	return join("", map {sprintf("%02X",$_);} @p16);
@@ -60,8 +73,15 @@ sub nthash($) {
 	my ( $pass ) = @_;
 	my ( $hex );
 	my ( $digest );
-	$pass = substr($pass||"",0,128);
-	$pass =~ s/(.)/$1\000/sg;
+	$pass = substr(defined($pass)?$pass:"",0,128);
+	if (!$HaveUnicode) {
+		# No unicode support: do a really broken to ucs2 convert
+		$pass =~ s/(.)/$1\000/sg;
+	}
+	else {
+		$pass = encode('ucs2', $pass);
+		$pass = pack("v*", unpack("n*",$pass));
+	}
 	$hex = "";
 	if ( $HaveDigestMD4 ) {
 		eval {
@@ -478,6 +498,28 @@ sub E_P16 {
 	return @p16;
 }
 
+sub E_P24 {
+	my ( @p21, @c8, @p24 );
+	@p21 = @_[0..20]; @c8 = @_[21..28]; @p24 = ();
+
+	push @p24, smbhash( @c8, @p21[ 0.. 6], 1 );
+	push @p24, smbhash( @c8, @p21[ 7..13], 1 );
+	push @p24, smbhash( @c8, @p21[14..20], 1 );
+	return @p24;
+}
+
+sub SMBNTencrypt {
+	my ( $password, $key ) = @_;
+	my ( $digest, @p21, @c8, @p24, $ret );
+
+	@c8 = unpack("C*",$key);
+	$digest = nthash( $password );
+	@p21 = map {hex($_)} ($digest =~ /(..)/g);
+	@p24 = E_P24( @p21[0..20], @c8 );
+	$ret = join("", map { chr($_) } @p24 );
+	return $ret;
+}
+
 1;
 
 __END__
@@ -537,6 +579,18 @@ hashes, and are available when requested:
    use Crypt::SmbHash qw(lmhash nthash)
    $lm = lmhash($pass);
    $nt = nthash($pass);
+
+If Encoding is available (part of perl-5.8) the $pass argument to
+ntlmgen, lmhash and nthash must be a perl string. In double use this:
+
+   use Crypt::SmbHash qw(ntlmgen lmhash nthash);
+   use Encode;
+   ( $lm, $nt ) = ntlmgen decode('iso-8859-1', $pass);
+   $lm = lmhash(decode_utf8($pass), $pwenc);
+   $nt = nthash(decode_utf8($pass));
+
+The $pwenc parameter to lmhash() is optional and defaults to 'iso-8859-1'.
+It specifies the encoding to which the password is encoded before hashing.
 
 =head1 MD4
 
